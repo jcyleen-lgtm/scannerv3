@@ -346,10 +346,18 @@
     try {
       await qr.start(session.camId, {
         fps: 15,
-        qrbox: (vw, vh) => {
-          const w = Math.floor(Math.min(vw, vh) * 0.85);
-          return { width: w, height: Math.floor(w * 0.5) };
-        },
+        try {
+  await qr.start(session.camId, {
+    fps: 20,
+    aspectRatio: 4/3,
+    disableFlip: false
+  }, onScan, () => {});
+
+  setTimeout(autoFocus, 500);
+} catch(e) {
+  console.error(e);
+  toast('Gagal membuka kamera');
+}
         aspectRatio: 4/3,
         disableFlip: false
       }, onScan, () => {});
