@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Barcode Scanner</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #000000; --muted: #666; --border: #e0e0e0;
+    --surface: #f5f5f5; --success: #22c55e; --danger: #ef4444;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  *, *::before, *::after { box-sizing: inherit; margin: 0; padding: 0; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body { background: var(--bg); color: var(--fg); min-height: 100dvh; }
+  .screen { display: none; flex-direction: column; min-height: 100dvh; }
+  .screen.active { display: flex; }
+
+  /* LOGIN */
+  .login { align-items: center; justify-content: center; padding: 24px; gap: 20px; }
+  .login h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+  .login p.sub { color: var(--muted); font-size: 14px; margin-top: -12px; }
+  .field { width: 100%; max-width: 380px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .field input, .field select {
+    width: 100%; padding: 12px 14px; font-size: 15px;
+    border: 1.5px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--fg); outline: none;
+    transition: border-color .15s; -webkit-appearance: none;
+  }
+  .field input:focus, .field select:focus { border-color: var(--fg); }
+  .field input::placeholder { color: #aaa; }
+  .btn-primary {
+    width: 100%; max-width: 380px; padding: 14px;
+    background: var(--fg); color: var(--bg);
+    border: none; border-radius: 8px;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+  }
+  .btn-primary:active { opacity: .8; }
+  .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* SCANNER */
+  .scanner-screen { padding: 0; }
+  .top-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    position: sticky; top: env(safe-area-inset-top, 0px); background: var(--bg); z-index: 10;
+  }
+  .top-bar .user { font-size: 14px; font-weight: 600; }
+  .top-bar .user span.label { color: var(--muted); font-weight: 400; }
+  .top-bar .cam-tag {
+    font-size: 11px; font-weight: 700; background: var(--fg); color: var(--bg);
+    padding: 2px 8px; border-radius: 4px; margin-left: 8px;
+  }
+  .btn-outline {
+    padding: 6px 14px; font-size: 13px; font-weight: 600;
+    background: transparent; color: var(--fg);
+    border: 1.5px solid var(--border); border-radius: 6px; cursor: pointer;
+  }
+  .btn-outline:active { background: var(--surface); }
+
+  #reader-wrap { position: relative; width: 100%; background: #000; aspect-ratio: 4/3; overflow: hidden; }
+  #reader { width: 100%; height: 100%; }
+  #reader video { width: 100% !important; height: 100% !important; object-fit: cover !important; }
+  .scan-line {
+    position: absolute; left: 8%; right: 8%; top: 50%; height: 2px;
+    background: var(--danger); animation: pulse 1.5s ease-in-out infinite;
+    pointer-events: none; z-index: 5;
+  }
+  @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+
+  .result-bar {
+    padding: 14px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; min-height: 52px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .dot.idle { background: var(--border); }
+  .dot.ok { background: var(--success); }
+  .dot.err { background: var(--danger); }
+  .result-bar .text { font-size: 14px; color: var(--muted); }
+  .result-bar .text.scanned {
+    color: var(--fg); font-weight: 600;
+    font-family: 'SF Mono','Cascadia Code','Consolas', monospace;
+    font-size: 13px; word-break: break-all;
+  }
+
+  .stats { display: flex; border-bottom: 1px solid var(--border); }
+  .stat { flex: 1; padding: 12px 16px; text-align: center; border-right: 1px solid var(--border); }
+  .stat:last-child { border-right: none; }
+  .stat .num { font-size: 24px; font-weight: 700; }
+  .stat .lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .section-title { font-size: 13px; font-weight: 600; padding: 12px 16px 8px; color: var(--muted); }
+  .history { flex: 1; overflow-y: auto; padding-bottom: 24px; }
+  .history-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  .history-item .idx { font-size: 11px; color: var(--muted); width: 24px; text-align: right; flex-shrink: 0; }
+  .history-item .info { flex: 1; min-width: 0; }
+  .history-item .barcode {
+    font-size: 13px; font-weight: 600;
+    font-family: 'SF Mono','Cascadia Code','Consolas', monospace;
+    word-break: break-all;
+  }
+  .history-item .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600; flex-shrink: 0; }
+  .badge.sent { background: #dcfce7; color: #166534; }
+  .badge.pending { background: #fef9c3; color: #854d0e; }
+  .badge.fail { background: #fee2e2; color: #991b1b; }
+
+  .empty-state { text-align: center; padding: 48px 16px; color: var(--muted); font-size: 14px; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--fg); color: var(--bg);
+    padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 200;
+  }
+  .toast.show { opacity: 1; }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#0a0a0a; --fg:#f0f0f0; --muted:#888; --border:#2a2a2a; --surface:#1a1a1a;
+    }
+    :root:not([data-theme="light"]) .badge.sent { background:#14532d; color:#86efac; }
+    :root:not([data-theme="light"]) .badge.pending { background:#713f12; color:#fde047; }
+    :root:not([data-theme="light"]) .badge.fail { background:#7f1d1d; color:#fca5a5; }
+  }
+  :root[data-theme="dark"] {
+    --bg:#0a0a0a; --fg:#f0f0f0; --muted:#888; --border:#2a2a2a; --surface:#1a1a1a;
+  }
+</style>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+
+<!-- =============================================
+  KONFIGURASI: Ganti URL di bawah dengan Apps Script URL kamu
+============================================= -->
+<script>
+  // ⬇⬇⬇ GANTI URL INI DENGAN GOOGLE APPS SCRIPT URL KAMU ⬇⬇⬇
+  const SHEET_URL = "https://script.google.com/macros/s/AKfycbykb-XzLV8Kel7kI4c-SgA3VP2a3LEuv6dTcqgabzNWdbBE525hwm-aJeRfQ3Emc2HF/exec";
+  // ⬆⬆⬆ GANTI URL INI ⬆⬆⬆
+</script>
+
+<!-- LOGIN -->
+<div id="login-screen" class="screen login active">
+  <h1>Barcode Scanner</h1>
+  <p class="sub">Scan & kirim ke Google Sheet</p>
+
+  <div class="field">
+    <label for="inp-name">Nama</label>
+    <input id="inp-name" type="text" placeholder="Masukkan nama kamu" autocomplete="name">
+  </div>
+
+  <div class="field">
+    <label for="inp-camera">Kamera</label>
+    <select id="inp-camera">
+      <option value="Cam 1">Cam 1</option>
+      <option value="Cam 2">Cam 2</option>
+      <option value="Cam 3">Cam 3</option>
+      <option value="Cam 4">Cam 4</option>
+      <option value="Cam 5">Cam 5</option>
+      <option value="Cam 6">Cam 6</option>
+      <option value="Cam 7">Cam 7</option>
+    </select>
+  </div>
+
+  <button id="btn-start" class="btn-primary">Mulai Scan</button>
+</div>
+
+<!-- SCANNER -->
+<div id="scanner-screen" class="screen scanner-screen">
+  <div class="top-bar">
+    <div class="user">
+      <span class="label">Scanner:</span> <span id="display-name">-</span>
+      <span class="cam-tag" id="display-cam">Cam 1</span>
+    </div>
+    <button class="btn-outline" id="btn-logout">Logout</button>
+  </div>
+
+  <div id="reader-wrap">
+    <div id="reader"></div>
+    <div class="scan-line"></div>
+  </div>
+
+  <div class="result-bar">
+    <div class="dot idle" id="status-dot"></div>
+    <div class="text" id="result-text">Arahkan kamera ke barcode</div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="num" id="stat-total">0</div><div class="lbl">Total Scan</div></div>
+    <div class="stat"><div class="num" id="stat-sent">0</div><div class="lbl">Terkirim</div></div>
+    <div class="stat"><div class="num" id="stat-session">0</div><div class="lbl">Sesi Ini</div></div>
+  </div>
+
+  <div class="section-title">Riwayat Scan</div>
+  <div class="history" id="history-list">
+    <div class="empty-state" id="empty-msg">Belum ada scan</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function() {
+  const KEY = 'bsc_session';
+  let session = JSON.parse(localStorage.getItem(KEY) || 'null');
+  let qr = null;
+  let history = JSON.parse(localStorage.getItem('bsc_hist') || '[]');
+  let lastCode = '', lastTime = 0;
+  const COOLDOWN = 2500;
+
+  // els
+  const $login = document.getElementById('login-screen');
+  const $scanner = document.getElementById('scanner-screen');
+  const $name = document.getElementById('inp-name');
+  const $cam = document.getElementById('inp-camera');
+  const $btnStart = document.getElementById('btn-start');
+  const $dName = document.getElementById('display-name');
+  const $dCam = document.getElementById('display-cam');
+  const $result = document.getElementById('result-text');
+  const $dot = document.getElementById('status-dot');
+  const $hist = document.getElementById('history-list');
+  const $empty = document.getElementById('empty-msg');
+  const $total = document.getElementById('stat-total');
+  const $sent = document.getElementById('stat-sent');
+  const $sCount = document.getElementById('stat-session');
+  const $toast = document.getElementById('toast');
+
+  // audio
+  let actx = null;
+  function beep() {
+    try {
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'square'; o.frequency.value = 1800;
+      g.gain.value = 0.08;
+      o.connect(g).connect(actx.destination);
+      o.start(); o.stop(actx.currentTime + 0.1);
+    } catch(e) {}
+  }
+
+  let tt;
+  function toast(m) {
+    $toast.textContent = m; $toast.classList.add('show');
+    clearTimeout(tt); tt = setTimeout(() => $toast.classList.remove('show'), 2000);
+  }
+
+  function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // ── Login ──
+  $btnStart.addEventListener('click', async () => {
+    const name = $name.value.trim();
+    if (!name) { toast('Masukkan nama dulu'); return; }
+
+    $btnStart.disabled = true;
+    $btnStart.textContent = 'Meminta izin kamera...';
+
+    // Request camera permission & detect devices
+    let camId = null;
+    try {
+      const tmp = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      tmp.getTracks().forEach(t => t.stop());
+      const devs = await Html5Qrcode.getCameras();
+      if (devs.length > 0) {
+        // prefer back camera
+        const back = devs.find(d => /back|belakang|rear|environment/i.test(d.label));
+        camId = back ? back.id : devs[devs.length - 1].id;
+      }
+    } catch(e) {
+      toast('Izin kamera ditolak. Cek pengaturan browser.');
+      $btnStart.disabled = false;
+      $btnStart.textContent = 'Mulai Scan';
+      return;
+    }
+
+    if (!camId) {
+      toast('Tidak ada kamera ditemukan');
+      $btnStart.disabled = false;
+      $btnStart.textContent = 'Mulai Scan';
+      return;
+    }
+
+    session = {
+      name: name,
+      camLabel: $cam.value,
+      camId: camId,
+      startedAt: new Date().toISOString()
+    };
+    localStorage.setItem(KEY, JSON.stringify(session));
+    localStorage.setItem('bsc_sc', '0');
+    show('scanner');
+  });
+
+  // ── Logout ──
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    if (qr) { try { await qr.stop(); } catch(e) {} qr = null; }
+    localStorage.removeItem(KEY);
+    localStorage.setItem('bsc_sc', '0');
+    session = null;
+    $btnStart.disabled = false;
+    $btnStart.textContent = 'Mulai Scan';
+    show('login');
+  });
+
+  // ── Screen switch ──
+  function show(which) {
+    $login.classList.toggle('active', which === 'login');
+    $scanner.classList.toggle('active', which === 'scanner');
+    if (which === 'scanner') {
+      $dName.textContent = session.name;
+      $dCam.textContent = session.camLabel;
+      updateStats(); renderHistory();
+      startScanner();
+    }
+  }
+
+  // ── Scanner ──
+  async function startScanner() {
+    if (qr) { try { await qr.stop(); } catch(e) {} }
+
+    qr = new Html5Qrcode("reader", {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.QR_CODE,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.CODE_93,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.ITF,
+        Html5QrcodeSupportedFormats.CODABAR,
+        Html5QrcodeSupportedFormats.DATA_MATRIX,
+        Html5QrcodeSupportedFormats.PDF_417
+      ],
+      verbose: false
+    });
+
+    try {
+      await qr.start(session.camId, {
+        fps: 15,
+        qrbox: (vw, vh) => {
+          const w = Math.floor(Math.min(vw, vh) * 0.85);
+          return { width: w, height: Math.floor(w * 0.5) };
+        },
+        aspectRatio: 4/3,
+        disableFlip: false
+      }, onScan, () => {});
+      setTimeout(autoFocus, 500);
+    } catch(e) {
+      console.error(e);
+      toast('Gagal membuka kamera');
+    }
+  }
+
+  async function autoFocus() {
+    try {
+      const v = document.querySelector('#reader video');
+      if (!v || !v.srcObject) return;
+      const t = v.srcObject.getVideoTracks()[0];
+      if (!t) return;
+      const c = t.getCapabilities ? t.getCapabilities() : {};
+      if (c.focusMode) {
+        if (c.focusMode.includes('continuous')) {
+          await t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        } else if (c.focusMode.includes('single-shot')) {
+          setInterval(async () => {
+            try { await t.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] }); } catch(e) {}
+          }, 3000);
+        }
+      }
+      if (c.width && c.height) {
+        try { await t.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } }); } catch(e) {}
+      }
+    } catch(e) {}
+  }
+
+  // ── Scan ──
+  function onScan(text, res) {
+    const now = Date.now();
+    if (text === lastCode && now - lastTime < COOLDOWN) return;
+    lastCode = text; lastTime = now;
+
+    beep();
+    if (navigator.vibrate) navigator.vibrate(150);
+
+    $dot.className = 'dot ok';
+    $result.className = 'text scanned';
+    $result.textContent = text;
+
+    const fmt = res?.result?.format?.formatName || '-';
+    const ts = new Date().toISOString();
+
+    const entry = { barcode: text, format: fmt, time: ts, scanner: session.name, cam: session.camLabel, status: 'pending' };
+    history.unshift(entry);
+    if (history.length > 300) history.pop();
+    localStorage.setItem('bsc_hist', JSON.stringify(history));
+
+    const sc = parseInt(localStorage.getItem('bsc_sc') || '0') + 1;
+    localStorage.setItem('bsc_sc', String(sc));
+
+    updateStats(); renderHistory();
+    sendToSheet(entry);
+
+    setTimeout(() => { $dot.className = 'dot idle'; }, 1500);
+  }
+
+  // ── Send to Sheet ──
+  async function sendToSheet(entry) {
+    if (!SHEET_URL || SHEET_URL.includes('GANTI_DENGAN')) {
+      entry.status = 'fail';
+      save(); renderHistory(); updateStats();
+      return;
+    }
+    try {
+      await fetch(SHEET_URL, {
+        method: 'POST', mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({
+          barcode: entry.barcode, format: entry.format,
+          scanner: entry.scanner, cam: entry.cam, time: entry.time
+        })
+      });
+      entry.status = 'sent';
+    } catch(e) {
+      entry.status = 'fail';
+    }
+    save(); renderHistory(); updateStats();
+  }
+
+  function save() { localStorage.setItem('bsc_hist', JSON.stringify(history)); }
+
+  // ── Stats ──
+  function updateStats() {
+    $total.textContent = history.length;
+    $sent.textContent = history.filter(h => h.status === 'sent').length;
+    $sCount.textContent = localStorage.getItem('bsc_sc') || '0';
+  }
+
+  // ── History ──
+  function renderHistory() {
+    const items = $hist.querySelectorAll('.history-item');
+    items.forEach(i => i.remove());
+
+    if (history.length === 0) { $empty.style.display = 'block'; return; }
+    $empty.style.display = 'none';
+
+    const show = history.slice(0, 50);
+    let html = '';
+    show.forEach((h, i) => {
+      const t = new Date(h.time);
+      const time = t.toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      const date = t.toLocaleDateString('id-ID', { day:'2-digit', month:'short' });
+      const bc = h.status === 'sent' ? 'sent' : h.status === 'fail' ? 'fail' : 'pending';
+      const bt = h.status === 'sent' ? 'Terkirim' : h.status === 'fail' ? 'Gagal' : 'Pending';
+      html += `<div class="history-item">
+        <div class="idx">${history.length - i}</div>
+        <div class="info">
+          <div class="barcode">${esc(h.barcode)}</div>
+          <div class="meta">${h.format} · ${h.cam} · ${time} ${date}</div>
+        </div>
+        <div class="badge ${bc}">${bt}</div>
+      </div>`;
+    });
+    $hist.insertAdjacentHTML('beforeend', html);
+  }
+
+  // ── Init ──
+  if (session && session.name && session.camId) {
+    show('scanner');
+  } else {
+    show('login');
+  }
+})();
+</script>
+</body>
+</html>
